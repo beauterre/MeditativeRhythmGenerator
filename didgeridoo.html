@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Didge Debugger - Organic Layers</title>
+    <style>
+        body { background: #1a1a2e; color: #4ecca3; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+        button { padding: 20px 40px; font-size: 24px; background: #4ecca3; border: none; cursor: pointer; border-radius: 10px; font-weight: bold; }
+        #status { margin-top: 20px; color: white; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+    <h1>Organic Didge Drone</h1>
+    <button id="btn">ACTIVATE ORGANIC GROWL</button>
+    <div id="status">Status: Waiting for user...</div>
+
+    <script>
+        var audioCtx = null;
+
+        function startDidge() {
+            document.getElementById('status').innerText = "Status: Initializing Organic Drone...";
+            
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            var masterGain = audioCtx.createGain();
+            masterGain.gain.value = 0.4; 
+            masterGain.connect(audioCtx.destination);
+
+            // --- THE FORMANT FILTERS (Shared "Mouth") ---
+            var f1 = audioCtx.createBiquadFilter();
+            var f2 = audioCtx.createBiquadFilter();
+            f1.type = 'bandpass';
+            f2.type = 'bandpass';
+            f1.Q.value = 12; 
+            f2.Q.value = 12;
+
+            var synthGain = audioCtx.createGain();
+            synthGain.gain.value = 0.8;
+
+            f1.connect(synthGain);
+            f2.connect(synthGain);
+            synthGain.connect(masterGain);
+
+            // --- HELPER: Create Organic Layer ---
+            function createLayer(baseFreq, modFreq, modDepth) {
+                var osc = audioCtx.createOscillator();
+                var drift = audioCtx.createOscillator();
+                var driftGain = audioCtx.createGain();
+                var lp = audioCtx.createBiquadFilter();
+
+                osc.type = 'sawtooth';
+                osc.frequency.value = baseFreq;
+
+                // Pitch Drift (The "Human" wobble)
+                drift.type = 'sine';
+                drift.frequency.value = modFreq; 
+                driftGain.gain.value = modDepth;
+
+                lp.type = 'lowpass';
+                lp.frequency.value = 1200;
+
+                drift.connect(driftGain);
+                driftGain.connect(osc.frequency);
+                osc.connect(lp);
+                
+                // Connect layer to the shared mouth filters
+                lp.connect(f1);
+                lp.connect(f2);
+
+                osc.start();
+                drift.start();
+            }
+
+            // LAYER 1: The Sub-Gravel (27Hz)
+            // Slow drift, deep presence
+            createLayer(27, 0.3, 1.5);
+
+            // LAYER 2: The Resonant Growl (77Hz)
+            // Slightly faster drift for organic movement
+            createLayer(77, 0.5, 2.0);
+
+            document.getElementById('status').innerText = "Status: Organic Drone Active!";
+
+            // --- MOUTH MORPHING (The "Wah") ---
+            setInterval(function() {
+                var time = audioCtx.currentTime;
+                
+                // Complex Morph: Combination of three sine waves for non-linear movement
+                var morph = (
+                    Math.sin(time * 12.8) + 
+                    Math.sin(time * 18.3) * 0.4 + 
+                    Math.sin(time * 15.4) * 0.2 + 
+                    Math.sin(time * 16.5) * 0.1 + 2
+                ) / 3.7;
+
+                // Formant shift
+                f1.frequency.value = 200 + (morph * 600);
+                f2.frequency.value = 800 + (morph * 1200);
+            }, 40);
+        }
+
+        document.getElementById('btn').addEventListener('click', function() {
+            if (!audioCtx) {
+                startDidge();
+            } else {
+                location.reload();
+            }
+        });
+    </script>
+</body>
+</html>

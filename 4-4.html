@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meditatieve Tala Generator</title>
+    <style>
+        body {
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+        }
+        .container {
+            background: #16213e;
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border: 1px solid #0f3460;
+        }
+        h1 { font-weight: 300; letter-spacing: 2px; color: #4ecca3; }
+        .controls { margin: 20px 0; display: flex; gap: 10px; justify-content: center; align-items: center; }
+        input { 
+            background: #0f3460; border: 1px solid #4ecca3; color: white; 
+            padding: 8px; border-radius: 5px; width: 80px; text-align: center;
+        }
+        button { 
+            background: #4ecca3; border: none; color: #1a1a2e; 
+            padding: 10px 20px; border-radius: 5px; cursor: pointer; 
+            font-weight: bold; transition: 0.3s;
+        }
+        button:hover { background: #45b393; transform: scale(1.05); }
+        .status { font-style: italic; color: #95a5a6; margin-top: 10px; font-size: 0.9rem; }
+        .seed-display { font-family: monospace; color: #4ecca3; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Tala Generator</h1>
+        <p>Meditatieve polyritmiek met morphing samples</p>
+        
+        <div class="controls">
+            <label>Seed:</label>
+            <input type="text" id="seedInput" placeholder="Random">
+            <button id="startBtn">Start Ritme</button>
+        </div>
+        
+        <div class="status" id="status">Klaar om te mediteren...</div>
+        <div class="status">Huidige Seed: <span class="seed-display" id="currentSeed">-</span></div>
+    </div>
+
+    <!-- 1. LOAD YOUR DATA FILE FIRST -->
+    <script src="drumkit.js"></script>
+
+       <script>
+        // --- CONFIGURATIE ---
+        const FINAL_MAP = {
+            bass:  ['bd01.mp3', 'bd02.mp3'],
+            snare: ['bn01.wav', 'bn02.wav'], 
+            hat:    ['hc02.mp3', 'hc04.mp3'],
+            perc:   ['pl1.mp3', 'pl2.mp3']
+        };
+
+        // Initial settings
+        let baseBPM = 85; // Started faster as requested
+        let currentBPM = baseBPM;
+        const BPM_DRIFT_RANGE = 5; // BPM will drift +/- 5 bpm
+        const BPM_DRIFT_SPEED = 0.02; // Speed of tempo change
+
+        let audioCtx;
+        let isPlaying = false;
+        let nextStepTime = 0;
+        let currentStep = 0;
+        let timerID;
+
+        const buffers = {};
+
+        function sfc32(a, b, c, d) {
+            return function() {
+                a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0; 
+                var t = (a + b | 0) + d | 0;
+                d = d + 1 | 0;
+                a = b ^ b >>> 9;
+                b = c + (c << 3) | 0;
+                c = (c << 21 | c >>> 11);
+                c = c + t | 0;
+                return (t >>> 0) / 4294967296;
+            }
+        }
+
+        async function loadSamples() {
+            for (let group in FINAL_MAP) {
+                const filePair = FINAL_MAP[group];
+                buffers[group] = await Promise.all(filePair.map(async fileName => {
+                    const dataUrl = DRUMKIT[fileName];
+                    if (!dataUrl) throw new Error(`File ${fileName} not found in drumkit.js`);
+                    const response = await fetch(dataUrl);
+                    const arrayBuffer = await response.arrayBuffer();
+                    return await audioCtx.decodeAudioData(arrayBuffer);
+                }));
+            }
+        }
+
+        function playSample(group, time) {
+            const buffersGroup = buffers[group];
+            
+            // --- INDEPENDENT VOLUME WAVES ---
+            // Each group and each sample within that group now has its own speed
+            const freqMap = { 
+                bass:  [0.04, 0.07], 
+                snare: [0.06, 0.12], 
+                hat:    [0.15, 0.21], 
+                perc:   [0.09, 0.18] 
+            };
+
+            const play = (buffer, freq, index) => {
+                const source = audioCtx.createBufferSource();
+                const gain = audioCtx.createGain();
+                
+                // Create a wave specifically for this sample
+                // Sine wave shifted to 0.0 -> 1.0 range
+                const volumeWave = (Math.sin(audioCtx.currentTime * freq * Math.PI * 2) + 1) / 2;
+                
+                source.buffer = buffer;
+                // Max volume is 0.6 to prevent clipping when multiple sounds hit
+                gain.gain.value = volumeWave * 0.6; 
+                
+                source.connect(gain);
+                gain.connect(audioCtx.destination);
+                
+                const startTime = Math.max(time, audioCtx.currentTime);
+                const offset = (Math.random() * 0.005); 
+                source.start(startTime + offset);
+            };
+
+            // Play both samples with their own independent waves
+            play(buffersGroup[0], freqMap[group][0], 0);
+            play(buffersGroup[1], freqMap[group][1], 1);
+        }
+
+        function scheduler() {
+            // Update BPM drift (slowly move currentBPM around baseBPM)
+            currentBPM = baseBPM + Math.sin(audioCtx.currentTime * BPM_DRIFT_SPEED) * BPM_DRIFT_RANGE;
+            
+            // Recalculate step duration based on the drifting BPM
+            const stepDuration = 60 / currentBPM / 2; 
+
+            while (nextStepTime < audioCtx.currentTime + 0.1) {
+                scheduleStep(currentStep, nextStepTime);
+                nextStepTime += stepDuration;
+                currentStep++;
+            }
+            timerID = setTimeout(scheduler, 25);
+        }
+
+        function scheduleStep(step, time) {
+            // Keep the rhythmic logic
+            if (step % 8 === 0 || (seedRand() > 0.85)) playSample('bass', time);
+            if (step % 8 === 4 || (seedRand() > 0.94)) playSample('snare', time);
+            if (step % 2 === 0) playSample('hat', time);
+            
+            const talaLength = 7; 
+            if (step % talaLength === 0 || seedRand() > 0.88) playSample('perc', time);
+        }
+
+        let seedRand;
+        function initSeed() {
+            const seedVal = document.getElementById('seedInput').value || Math.random().toString(36).substring(7);
+            document.getElementById('currentSeed').innerText = seedVal;
+            let seedNum = 0;
+            for (let i = 0; i < seedVal.length; i++) seedNum += seedVal.charCodeAt(i);
+            seedRand = sfc32(seedNum, 0x9E3779B9, 0x243F6A88, 0xB7E15162);
+        }
+
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            if (isPlaying) {
+                isPlaying = false;
+                clearTimeout(timerID);
+                document.getElementById('startBtn').innerText = "Start Ritme";
+                return;
+            }
+
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            document.getElementById('status').innerText = "Laden van samples...";
+            
+            try {
+                await loadSamples();
+                initSeed();
+                
+                isPlaying = true;
+                nextStepTime = audioCtx.currentTime;
+                currentStep = 0;
+                scheduler();
+                
+                document.getElementById('startBtn').innerText = "Stop Ritme";
+                document.getElementById('status').innerText = "De stroom vloeit...";
+            } catch (e) {
+                document.getElementById('status').innerText = "Fout: " + e.message;
+                console.error(e);
+            }
+        });
+    </script>
+
+</body>
+</html>

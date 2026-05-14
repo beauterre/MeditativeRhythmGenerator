@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meditatieve Tala Generator</title>
+    <title>Meditatieve Tala Generator - Stereo</title>
     <style>
         body {
             background: #1a1a2e;
@@ -56,29 +56,136 @@
         <div class="status">Huidige Seed: <span class="seed-display" id="currentSeed">-</span></div>
     </div>
 
+    <script src="drumkit.js"></script>
+
     <script>
-        // --- CONFIGURATIE ---
-        // Vervang deze URL's door jouw eigen samples
-        const SAMPLES = {
-            bass: ['https://cdn.freesound.org/previews/331/331313_4414645-lq.mp3', 'https://cdn.freesound.org/previews/331/331313_4414645-lq.mp3'], // Voeg hier bd1, bd2 toe
-            snare: ['https://cdn.freesound.org/previews/443/443350_5123856-lq.mp3', 'https://cdn.freesound.org/previews/443/443350_5123856-lq.mp3'], // Voeg hier sn1, sn2 toe
-            hat: ['https://cdn.freesound.org/previews/415/415224_6113412-lq.mp3', 'https://cdn.freesound.org/previews/415/415224_6113412-lq.mp3'], // Voeg hier hh1, hh2 toe
-            perc: ['https://cdn.freesound.org/previews/135/135375_2418122-lq.mp3', 'https://cdn.freesound.org/previews/135/135375_2418122-lq.mp3']  // Voeg hier p1, p2 toe
+        var audioCtx;
+        var isPlaying = false;
+        var nextStepTime = 0;
+        var currentStep = 0;
+        var timerID;
+
+        var buffers = {}; 
+        var sampleGroups = {};
+        var currentGroupIndex = { bass: 0, snare: 0, hat: 0, perc: 0 };
+        
+        var PREFIX_MAP = {
+            'bd': 'bass', 'bn': 'snare', 'hc': 'hat', 'ho': 'hat',
+            'pl': 'perc', 'pc': 'perc', 'dr': 'perc', 'dv': 'perc',
+            'sd': 'perc', 'tl': 'perc', 'tm': 'perc', 'tn': 'perc'
         };
 
-        const BPM = 65;
-        const STEP_DURATION = 60 / BPM / 2; // 8ste noten
+        var baseBPM = 145; 
+        var currentBPM = baseBPM;
+        var BPM_DRIFT_RANGE = 8; 
+        var BPM_DRIFT_SPEED = 0.05; 
 
-        let audioCtx;
-        let isPlaying = false;
-        let nextStepTime = 0;
-        let currentStep = 0;
-        let timerID;
+        var currentMode = 'RITUAL'; 
+        var modeTimer = 0;
+        var currentCycleLength = 16;
 
-        // Buffers voor de audio
-        const buffers = {};
+        var ritualReverb; 
+        var ritualGain;
 
-        // --- PSEUDO-RANDOM GENERATOR ---
+        function setupEffects(ctx) {
+            ritualGain = ctx.createGain();
+            ritualReverb = ctx.createDelay(2.0);
+            var feedback = ctx.createGain();
+            ritualReverb.delayTime.value = 0.3; 
+            feedback.gain.value = 0.25; 
+            ritualGain.connect(ritualReverb);
+            ritualReverb.connect(feedback);
+            feedback.connect(ritualReverb);
+            ritualReverb.connect(ctx.destination);
+            ritualGain.connect(ctx.destination);
+        }
+
+        function Didgeridoo(ctx) {
+            this.ctx = ctx;
+            
+            this.f1 = ctx.createBiquadFilter();
+            this.f2 = ctx.createBiquadFilter();
+            this.f1.type = 'bandpass';
+            this.f2.type = 'bandpass';
+            this.f1.Q.value = 12; 
+            this.f2.Q.value = 12;
+
+            // --- STEREO PANNER FOR DRONE ---
+            this.panner = ctx.createStereoPanner();
+            this.mainGain = ctx.createGain();
+            this.mainGain.gain.value = 0.15; 
+            
+            this.f1.connect(this.mainGain);
+            this.f2.connect(this.mainGain);
+            this.mainGain.connect(this.panner);
+            this.panner.connect(ritualGain);
+
+            var createLayer = function(baseFreq, modFreq, modDepth) {
+                var osc = ctx.createOscillator();
+                var drift = ctx.createOscillator();
+                var driftGain = ctx.createGain();
+                var lp = ctx.createBiquadFilter();
+
+                osc.type = 'sawtooth';
+                osc.frequency.value = baseFreq;
+                drift.type = 'sine';
+                drift.frequency.value = modFreq; 
+                driftGain.gain.value = modDepth;
+                lp.type = 'lowpass';
+                lp.frequency.value = 1200;
+
+                drift.connect(driftGain);
+                driftGain.connect(osc.frequency);
+                osc.connect(lp);
+                lp.connect(this.f1);
+                lp.connect(this.f2);
+
+                osc.start();
+                drift.start();
+            };
+
+            createLayer.call(this, 27, 0.3, 1.5);
+            createLayer.call(this, 77, 0.5, 2.0);
+        }
+
+        Didgeridoo.prototype.update = function(time, mode, step) {
+            var flicker = (Math.sin(time * 2) * 0.05) + 0.1;
+            this.mainGain.gain.setTargetAtTime(flicker, time, 0.05);
+
+            // --- STEREO ROTATION ---
+            // The didgeridoo slowly orbits your head
+            var panPos = Math.sin(time * 0.2); 
+            this.panner.pan.setTargetAtTime(panPos, time, 0.1);
+
+            var morph;
+            if (mode === 'RITUAL') {
+                var intensity = (Math.sin(time * 0.15) + 1) / 2; 
+                if (intensity < 0.3) {
+                    var cyclePos = (step % 16) / 16;
+                    morph = (Math.sin(cyclePos * Math.PI * 2) + 1) / 2;
+                } else if (intensity < 0.6) {
+                    var beatPos = (step % 8) / 8;
+                    morph = (Math.sin(beatPos * Math.PI * 2) + 1) / 2;
+                } else if (intensity < 0.85) {
+                    var beatPos = (step % 4) / 4;
+                    morph = (Math.sin(beatPos * Math.PI * 2) + 1) / 2;
+                } else {
+                    var beatPos = (step % 2) / 2;
+                    morph = (Math.sin(beatPos * Math.PI * 2) + 1) / 2;
+                }
+            } else {
+                morph = seedRand();
+            }
+
+            var globalDrift = (Math.sin(time * (19.8 + 18.6 * Math.sin(time / 6))) + 1) / 2;
+            var finalMorph = (morph * 0.8) + (globalDrift * 0.2);
+
+            this.f1.frequency.setTargetAtTime(200 + (finalMorph * 600), time, 0.1);
+            this.f2.frequency.setTargetAtTime(800 + (finalMorph * 1200), time, 0.1);
+        };
+
+        var drone;
+
         function sfc32(a, b, c, d) {
             return function() {
                 a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0; 
@@ -92,108 +199,176 @@
             }
         }
 
-        async function loadSamples() {
-            for (let key in SAMPLES) {
-                buffers[key] = await Promise.all(SAMPLES[key].map(async url => {
-                    const response = await fetch(url);
-                    const arrayBuffer = await response.arrayBuffer();
-                    return await audioCtx.decodeAudioData(arrayBuffer);
-                }));
+        async function loadAllSamples() {
+            for (var fileName in DRUMKIT) {
+                var prefix = fileName.substring(0, 2);
+                var category = PREFIX_MAP[prefix];
+                if (category) {
+                    if (!sampleGroups[category]) sampleGroups[category] = [];
+                    sampleGroups[category].push(fileName);
+                }
+            }
+            var loadPromises = [];
+            for (var fileName in DRUMKIT) {
+                loadPromises.push((async function(fn) {
+                    var dataUrl = DRUMKIT[fn];
+                    var response = await fetch(dataUrl);
+                    var arrayBuffer = await response.arrayBuffer();
+                    buffers[fn] = await audioCtx.decodeAudioData(arrayBuffer);
+                })(fileName));
+            }
+            await Promise.all(loadPromises);
+        }
+
+        function evolveSamples() {
+            for (var cat in currentGroupIndex) {
+                var prob = (currentMode === 'RITUAL') ? 0.10 : 0.40;
+                if (seedRand() > (1 - prob)) {
+                    var group = sampleGroups[cat];
+                    if (group && group.length > 1) {
+                        currentGroupIndex[cat] = (currentGroupIndex[cat] + 1) % group.length;
+                    }
+                }
             }
         }
 
-        function playSample(group, time) {
-            const buffersGroup = buffers[group];
-            
-            // De LFO: Bereken volume op basis van tijd (sine wave)
-            // Elke groep heeft een eigen snelheid (frequency)
-            const freqMap = { bass: 0.05, snare: 0.07, hat: 0.11, perc: 0.13 };
-            const phase = Math.sin(audioCtx.currentTime * freqMap[group] * Math.PI * 2);
-            
-            // Morphing volumes (som = 1.0)
-            const vol1 = (phase + 1) / 2;
-            const vol2 = 1 - vol1;
+        function playSample(category, time, velocity) {
+            if (velocity === undefined) velocity = 1.0;
+            var groupFiles = sampleGroups[category];
+            if (!groupFiles) return;
+            var idx = currentGroupIndex[category];
+            var file1 = groupFiles[idx];
+            var file2 = groupFiles[(idx + 1) % groupFiles.length];
+            var freqMap = { bass: [0.1, 0.2], snare: [0.2, 0.4], hat: [0.5, 0.8], perc: [0.3, 0.6] };
 
-            const play = (buffer, volume) => {
-                const source = audioCtx.createBufferSource();
-                const gain = audioCtx.createGain();
-                source.buffer = buffer;
-                gain.gain.value = volume * 0.8; // Master volume cap
-                source.connect(gain);
-                gain.connect(audioCtx.destination);
+            var play = function(fileName, freq) {
+                var source = audioCtx.createBufferSource();
+                var gain = audioCtx.createGain();
                 
-                // Humanize: kleine random offset
-                const offset = (Math.random() - 0.5) * 0.01; 
-                source.start(time + offset);
-            };
+                // --- STEREO PANNING FOR DRUMS ---
+                var panner = audioCtx.createStereoPanner();
+                
+                // Randomize pan based on category to create a "Ritual Circle"
+                var panVal = 0;
+                if (category === 'hat') panVal = (Math.random() * 2 - 1) * 0.8; // Hats wide
+                if (category === 'perc') panVal = (Math.random() * 2 - 1) * 0.5; // Perc mid-wide
+                if (category === 'bass') panVal = 0; // Bass center
+                
+                panner.pan.value = panVal;
 
-            play(buffersGroup[0], vol1);
-            play(buffersGroup[1], vol2);
+                var volumeWave = (Math.sin(audioCtx.currentTime * freq * Math.PI * 2) + 1) / 2;
+                source.buffer = buffers[fileName];
+                gain.gain.value = volumeWave * 0.3 * velocity; 
+                
+                source.connect(gain);
+                gain.connect(panner);
+                panner.connect(ritualGain);
+                
+                var startTime = Math.max(time, audioCtx.currentTime);
+                source.start(startTime + (seedRand() * 0.002));
+            };
+            play(file1, freqMap[category][0]);
+            play(file2, freqMap[category][1]);
         }
 
         function scheduler() {
+            currentBPM = baseBPM + Math.sin(audioCtx.currentTime * BPM_DRIFT_SPEED) * BPM_DRIFT_RANGE;
+            var stepDuration = 60 / currentBPM / 2; 
+            var delayTime = (60 / currentBPM) * 0.75; 
+            ritualReverb.delayTime.setTargetAtTime(delayTime, audioCtx.currentTime, 0.1);
+
+            if (drone) drone.update(audioCtx.currentTime, currentMode, currentStep);
+            
             while (nextStepTime < audioCtx.currentTime + 0.1) {
                 scheduleStep(currentStep, nextStepTime);
-                nextStepTime += STEP_DURATION;
+                modeTimer++;
+                if (modeTimer > 32) { 
+                    if (currentMode === 'RITUAL' && seedRand() > 0.8) {
+                        currentMode = 'CHAOS';
+                        modeTimer = 0;
+                        var signatures = [5, 7, 11];
+                        currentCycleLength = signatures[Math.floor(seedRand() * signatures.length)];
+                    } else if (currentMode === 'CHAOS' && seedRand() > 0.7) {
+                        currentMode = 'RITUAL';
+                        currentCycleLength = 16;
+                        modeTimer = 0;
+                    }
+                }
+                if (currentStep % 8 === 0) evolveSamples();
+                nextStepTime += stepDuration;
                 currentStep++;
             }
             timerID = setTimeout(scheduler, 25);
         }
 
         function scheduleStep(step, time) {
-            // Patroon generatie op basis van seed
-            // We gebruiken modulo's om verschillende maatsoorten/cycli te creëren
-            
-            // Bass: Anker op 1, dan random
-            if (step % 8 === 0 || (seedRand() > 0.8)) playSample('bass', time);
-            
-            // Snare: Anker op 4 en 12 (in 16 steps)
-            if (step % 8 === 4 || (seedRand() > 0.92)) playSample('snare', time);
-            
-            // Highhat: 8/8 feel
-            if (step % 2 === 0) playSample('hat', time);
-            
-            // Percussie: De "Tala" cyclus (bijv. 5 of 7)
-            const talaLength = 7; 
-            if (step % talaLength === 0 || seedRand() > 0.85) playSample('perc', time);
+            var cycle = step % currentCycleLength;
+            if (currentMode === 'RITUAL') {
+                if (cycle % 4 === 0) playSample('bass', time, 1.2);
+                else if (cycle % 4 === 2) {
+                    playSample('bass', time, 0.7);
+                    playSample('bass', time + (60/currentBPM/4), 0.5);
+                }
+                if (cycle % 2 === 0) playSample('hat', time, 0.3);
+                if ([0, 6, 8, 14].includes(cycle)) playSample('perc', time, 0.6);
+                if (cycle === 15) playSample('snare', time, 0.8);
+            } else {
+                if (cycle === 0) {
+                    playSample('bass', time, 1.4);
+                    playSample('perc', time, 1.0);
+                }
+                if (cycle % 2 === 0) playSample('bass', time, 0.8);
+                if (seedRand() > 0.4) playSample('perc', time, 0.7);
+                if (seedRand() > 0.6) playSample('hat', time, 0.5);
+                if (cycle === Math.floor(currentCycleLength / 2) || cycle === currentCycleLength - 1) {
+                    playSample('snare', time, 1.2);
+                }
+                if (seedRand() > 0.95) {
+                    var groups = ['bass', 'snare', 'hat', 'perc'];
+                    playSample(groups[Math.floor(seedRand() * groups.length)], time, 0.7);
+                }
+            }
         }
 
-        let seedRand;
+        var seedRand;
         function initSeed() {
-            const seedVal = document.getElementById('seedInput').value || Math.random().toString(36).substring(7);
+            var seedVal = document.getElementById('seedInput').value || Math.random().toString(36).substring(7);
             document.getElementById('currentSeed').innerText = seedVal;
-            
-            // Simpele string naar numeric seed conversie
-            let seedNum = 0;
-            for (let i = 0; i < seedVal.length; i++) seedNum += seedVal.charCodeAt(i);
-            
+            var seedNum = 0;
+            for (var i = 0; i < seedVal.length; i++) seedNum += seedVal.charCodeAt(i);
             seedRand = sfc32(seedNum, 0x9E3779B9, 0x243F6A88, 0xB7E15162);
+            for (var cat in currentGroupIndex) {
+                var group = sampleGroups[cat];
+                if (group) currentGroupIndex[cat] = Math.floor(seedRand() * group.length);
+            }
         }
 
-        document.getElementById('startBtn').addEventListener('click', async () => {
+        document.getElementById('startBtn').addEventListener('click', async function() {
             if (isPlaying) {
                 isPlaying = false;
                 clearTimeout(timerID);
+                if (drone) {
+                    drone.mainGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.5);
+                }
                 document.getElementById('startBtn').innerText = "Start Ritme";
                 return;
             }
-
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            document.getElementById('status').innerText = "Laden van samples...";
             
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            setupEffects(audioCtx);
+            document.getElementById('status').innerText = "Laden van all samples...";
             try {
-                await loadSamples();
+                await loadAllSamples();
                 initSeed();
-                
+                drone = new Didgeridoo(audioCtx);
                 isPlaying = true;
                 nextStepTime = audioCtx.currentTime;
                 currentStep = 0;
                 scheduler();
-                
                 document.getElementById('startBtn').innerText = "Stop Ritme";
-                document.getElementById('status').innerText = "De stroom vloeit...";
+                document.getElementById('status').innerText = "The holy drone echoes...";
             } catch (e) {
-                document.getElementById('status').innerText = "Fout bij laden samples. Check console.";
+                document.getElementById('status').innerText = "Fout: " + e.message;
                 console.error(e);
             }
         });

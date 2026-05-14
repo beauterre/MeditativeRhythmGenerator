@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drumkit Object Viewer</title>
+</head>
+<body>
+        <!-- Load the generated script -->
+        <script>console.log("load drumkit now")</script>
+        <script src="drumkit.js"></script>
+     <script>
+        console.log("after drumkit load");
+        
+        var str = "";
+        for(var all in DRUMKIT) {
+            // Removed the extra ')' from the end of the line below
+            str += "DRUMKIT[" + all + "]\n"; 
+        } 
+        console.log("str:\n" + str);
+    </script>
+
+</body>
+</html>
