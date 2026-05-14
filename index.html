@@ -49,6 +49,7 @@
         <div class="controls">
             <label>Seed:</label>
             <input type="text" id="seedInput" placeholder="Random">
+            <input type="number" id="bpm" value="135">
             <button id="startBtn">Start Ritme</button>
         </div>
         
@@ -75,7 +76,7 @@
             'sd': 'perc', 'tl': 'perc', 'tm': 'perc', 'tn': 'perc'
         };
 
-        var baseBPM = 145; 
+        var baseBPM = parseInt(document.getElementById("bpm").value) || 135;
         var currentBPM = baseBPM;
         var BPM_DRIFT_RANGE = 8; 
         var BPM_DRIFT_SPEED = 0.05; 
