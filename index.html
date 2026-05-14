@@ -49,8 +49,8 @@
         <div class="controls">
             <label>Seed:</label>
             <input type="text" id="seedInput" placeholder="Random">
-			<label>BPM:</label>
-            <input type="number" id="bpm" value="135">
+            <label>BPM:</label>
+            <input type="number" id="bpm" value="55">
             <button id="startBtn">Start Ritme</button>
         </div>
         
@@ -77,8 +77,8 @@
             'sd': 'perc', 'tl': 'perc', 'tm': 'perc', 'tn': 'perc'
         };
 
-        var baseBPM = parseInt(document.getElementById("bpm").value) || 135;
-        var currentBPM = baseBPM;
+        var baseBPM = 135; 
+        var currentBPM = 135;
         var BPM_DRIFT_RANGE = 8; 
         var BPM_DRIFT_SPEED = 0.05; 
 
@@ -94,7 +94,7 @@
             ritualReverb = ctx.createDelay(2.0);
             var feedback = ctx.createGain();
             ritualReverb.delayTime.value = 0.3; 
-            feedback.gain.value = 0.25; 
+            feedback.gain.value = 0.45; 
             ritualGain.connect(ritualReverb);
             ritualReverb.connect(feedback);
             feedback.connect(ritualReverb);
@@ -104,7 +104,6 @@
 
         function Didgeridoo(ctx) {
             this.ctx = ctx;
-            
             this.f1 = ctx.createBiquadFilter();
             this.f2 = ctx.createBiquadFilter();
             this.f1.type = 'bandpass';
@@ -112,7 +111,6 @@
             this.f1.Q.value = 12; 
             this.f2.Q.value = 12;
 
-            // --- STEREO PANNER FOR DRONE ---
             this.panner = ctx.createStereoPanner();
             this.mainGain = ctx.createGain();
             this.mainGain.gain.value = 0.15; 
@@ -127,7 +125,6 @@
                 var drift = ctx.createOscillator();
                 var driftGain = ctx.createGain();
                 var lp = ctx.createBiquadFilter();
-
                 osc.type = 'sawtooth';
                 osc.frequency.value = baseFreq;
                 drift.type = 'sine';
@@ -135,13 +132,11 @@
                 driftGain.gain.value = modDepth;
                 lp.type = 'lowpass';
                 lp.frequency.value = 1200;
-
                 drift.connect(driftGain);
                 driftGain.connect(osc.frequency);
                 osc.connect(lp);
                 lp.connect(this.f1);
                 lp.connect(this.f2);
-
                 osc.start();
                 drift.start();
             };
@@ -153,9 +148,6 @@
         Didgeridoo.prototype.update = function(time, mode, step) {
             var flicker = (Math.sin(time * 2) * 0.05) + 0.1;
             this.mainGain.gain.setTargetAtTime(flicker, time, 0.05);
-
-            // --- STEREO ROTATION ---
-            // The didgeridoo slowly orbits your head
             var panPos = Math.sin(time * 0.2); 
             this.panner.pan.setTargetAtTime(panPos, time, 0.1);
 
@@ -178,10 +170,8 @@
             } else {
                 morph = seedRand();
             }
-
             var globalDrift = (Math.sin(time * (19.8 + 18.6 * Math.sin(time / 6))) + 1) / 2;
             var finalMorph = (morph * 0.8) + (globalDrift * 0.2);
-
             this.f1.frequency.setTargetAtTime(200 + (finalMorph * 600), time, 0.1);
             this.f2.frequency.setTargetAtTime(800 + (finalMorph * 1200), time, 0.1);
         };
@@ -246,26 +236,18 @@
             var play = function(fileName, freq) {
                 var source = audioCtx.createBufferSource();
                 var gain = audioCtx.createGain();
-                
-                // --- STEREO PANNING FOR DRUMS ---
                 var panner = audioCtx.createStereoPanner();
-                
-                // Randomize pan based on category to create a "Ritual Circle"
                 var panVal = 0;
-                if (category === 'hat') panVal = (Math.random() * 2 - 1) * 0.8; // Hats wide
-                if (category === 'perc') panVal = (Math.random() * 2 - 1) * 0.5; // Perc mid-wide
-                if (category === 'bass') panVal = 0; // Bass center
-                
+                if (category === 'hat') panVal = (Math.random() * 2 - 1) * 0.8; 
+                if (category === 'perc') panVal = (Math.random() * 2 - 1) * 0.5; 
+                if (category === 'bass') panVal = 0; 
                 panner.pan.value = panVal;
-
                 var volumeWave = (Math.sin(audioCtx.currentTime * freq * Math.PI * 2) + 1) / 2;
                 source.buffer = buffers[fileName];
                 gain.gain.value = volumeWave * 0.3 * velocity; 
-                
                 source.connect(gain);
                 gain.connect(panner);
                 panner.connect(ritualGain);
-                
                 var startTime = Math.max(time, audioCtx.currentTime);
                 source.start(startTime + (seedRand() * 0.002));
             };
@@ -274,13 +256,15 @@
         }
 
         function scheduler() {
+			var userBPM = parseInt(document.getElementById("bpm").value);
+            baseBPM = (!isNaN(userBPM)) ? userBPM : 135;
+            currentBPM = baseBPM;
             currentBPM = baseBPM + Math.sin(audioCtx.currentTime * BPM_DRIFT_SPEED) * BPM_DRIFT_RANGE;
+			//console.log("currentBPM:"+currentBPM);
             var stepDuration = 60 / currentBPM / 2; 
             var delayTime = (60 / currentBPM) * 0.75; 
             ritualReverb.delayTime.setTargetAtTime(delayTime, audioCtx.currentTime, 0.1);
-
             if (drone) drone.update(audioCtx.currentTime, currentMode, currentStep);
-            
             while (nextStepTime < audioCtx.currentTime + 0.1) {
                 scheduleStep(currentStep, nextStepTime);
                 modeTimer++;
@@ -350,12 +334,18 @@
                 isPlaying = false;
                 clearTimeout(timerID);
                 if (drone) {
-                    drone.mainGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.5);
+					console.log("set drone volume..")
+                    drone.mainGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
                 }
                 document.getElementById('startBtn').innerText = "Start Ritme";
                 return;
             }
             
+            // CORRECTED: Capture BPM from input right before starting
+            var userBPM = parseInt(document.getElementById("bpm").value);
+            baseBPM = (!isNaN(userBPM)) ? userBPM : 135;
+            currentBPM = baseBPM;
+
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             setupEffects(audioCtx);
             document.getElementById('status').innerText = "Laden van all samples...";
