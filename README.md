@@ -1,5 +1,5 @@
 # MeditativeRhythmGenerator
-[Tala maker, wavy performance.](https://github.com/beauterre/MeditativeRhythmGenerator/edit/main/Index.html)
+[listen to the Tala maker.](https://beauterre.github.io/MeditativeRhythmGenerator/)
 
 # 🧘 Meditative Tala Generator
 
