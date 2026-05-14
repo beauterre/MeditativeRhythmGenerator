@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meditatieve Tala Generator</title>
+    <style>
+        body {
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+        }
+        .container {
+            background: #16213e;
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border: 1px solid #0f3460;
+        }
+        h1 { font-weight: 300; letter-spacing: 2px; color: #4ecca3; }
+        .controls { margin: 20px 0; display: flex; gap: 10px; justify-content: center; align-items: center; }
+        input { 
+            background: #0f3460; border: 1px solid #4ecca3; color: white; 
+            padding: 8px; border-radius: 5px; width: 80px; text-align: center;
+        }
+        button { 
+            background: #4ecca3; border: none; color: #1a1a2e; 
+            padding: 10px 20px; border-radius: 5px; cursor: pointer; 
+            font-weight: bold; transition: 0.3s;
+        }
+        button:hover { background: #45b393; transform: scale(1.05); }
+        .status { font-style: italic; color: #95a5a6; margin-top: 10px; font-size: 0.9rem; }
+        .seed-display { font-family: monospace; color: #4ecca3; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Tala Generator</h1>
+        <p>Meditatieve polyritmiek met morphing samples</p>
+        
+        <div class="controls">
+            <label>Seed:</label>
+            <input type="text" id="seedInput" placeholder="Random">
+            <button id="startBtn">Start Ritme</button>
+        </div>
+        
+        <div class="status" id="status">Klaar om te mediteren...</div>
+        <div class="status">Huidige Seed: <span class="seed-display" id="currentSeed">-</span></div>
+    </div>
+
+    <script>
+        // --- CONFIGURATIE ---
+        // Vervang deze URL's door jouw eigen samples
+        const SAMPLES = {
+            bass: ['https://cdn.freesound.org/previews/331/331313_4414645-lq.mp3', 'https://cdn.freesound.org/previews/331/331313_4414645-lq.mp3'], // Voeg hier bd1, bd2 toe
+            snare: ['https://cdn.freesound.org/previews/443/443350_5123856-lq.mp3', 'https://cdn.freesound.org/previews/443/443350_5123856-lq.mp3'], // Voeg hier sn1, sn2 toe
+            hat: ['https://cdn.freesound.org/previews/415/415224_6113412-lq.mp3', 'https://cdn.freesound.org/previews/415/415224_6113412-lq.mp3'], // Voeg hier hh1, hh2 toe
+            perc: ['https://cdn.freesound.org/previews/135/135375_2418122-lq.mp3', 'https://cdn.freesound.org/previews/135/135375_2418122-lq.mp3']  // Voeg hier p1, p2 toe
+        };
+
+        const BPM = 65;
+        const STEP_DURATION = 60 / BPM / 2; // 8ste noten
+
+        let audioCtx;
+        let isPlaying = false;
+        let nextStepTime = 0;
+        let currentStep = 0;
+        let timerID;
+
+        // Buffers voor de audio
+        const buffers = {};
+
+        // --- PSEUDO-RANDOM GENERATOR ---
+        function sfc32(a, b, c, d) {
+            return function() {
+                a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0; 
+                var t = (a + b | 0) + d | 0;
+                d = d + 1 | 0;
+                a = b ^ b >>> 9;
+                b = c + (c << 3) | 0;
+                c = (c << 21 | c >>> 11);
+                c = c + t | 0;
+                return (t >>> 0) / 4294967296;
+            }
+        }
+
+        async function loadSamples() {
+            for (let key in SAMPLES) {
+                buffers[key] = await Promise.all(SAMPLES[key].map(async url => {
+                    const response = await fetch(url);
+                    const arrayBuffer = await response.arrayBuffer();
+                    return await audioCtx.decodeAudioData(arrayBuffer);
+                }));
+            }
+        }
+
+        function playSample(group, time) {
+            const buffersGroup = buffers[group];
+            
+            // De LFO: Bereken volume op basis van tijd (sine wave)
+            // Elke groep heeft een eigen snelheid (frequency)
+            const freqMap = { bass: 0.05, snare: 0.07, hat: 0.11, perc: 0.13 };
+            const phase = Math.sin(audioCtx.currentTime * freqMap[group] * Math.PI * 2);
+            
+            // Morphing volumes (som = 1.0)
+            const vol1 = (phase + 1) / 2;
+            const vol2 = 1 - vol1;
+
+            const play = (buffer, volume) => {
+                const source = audioCtx.createBufferSource();
+                const gain = audioCtx.createGain();
+                source.buffer = buffer;
+                gain.gain.value = volume * 0.8; // Master volume cap
+                source.connect(gain);
+                gain.connect(audioCtx.destination);
+                
+                // Humanize: kleine random offset
+                const offset = (Math.random() - 0.5) * 0.01; 
+                source.start(time + offset);
+            };
+
+            play(buffersGroup[0], vol1);
+            play(buffersGroup[1], vol2);
+        }
+
+        function scheduler() {
+            while (nextStepTime < audioCtx.currentTime + 0.1) {
+                scheduleStep(currentStep, nextStepTime);
+                nextStepTime += STEP_DURATION;
+                currentStep++;
+            }
+            timerID = setTimeout(scheduler, 25);
+        }
+
+        function scheduleStep(step, time) {
+            // Patroon generatie op basis van seed
+            // We gebruiken modulo's om verschillende maatsoorten/cycli te creëren
+            
+            // Bass: Anker op 1, dan random
+            if (step % 8 === 0 || (seedRand() > 0.8)) playSample('bass', time);
+            
+            // Snare: Anker op 4 en 12 (in 16 steps)
+            if (step % 8 === 4 || (seedRand() > 0.92)) playSample('snare', time);
+            
+            // Highhat: 8/8 feel
+            if (step % 2 === 0) playSample('hat', time);
+            
+            // Percussie: De "Tala" cyclus (bijv. 5 of 7)
+            const talaLength = 7; 
+            if (step % talaLength === 0 || seedRand() > 0.85) playSample('perc', time);
+        }
+
+        let seedRand;
+        function initSeed() {
+            const seedVal = document.getElementById('seedInput').value || Math.random().toString(36).substring(7);
+            document.getElementById('currentSeed').innerText = seedVal;
+            
+            // Simpele string naar numeric seed conversie
+            let seedNum = 0;
+            for (let i = 0; i < seedVal.length; i++) seedNum += seedVal.charCodeAt(i);
+            
+            seedRand = sfc32(seedNum, 0x9E3779B9, 0x243F6A88, 0xB7E15162);
+        }
+
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            if (isPlaying) {
+                isPlaying = false;
+                clearTimeout(timerID);
+                document.getElementById('startBtn').innerText = "Start Ritme";
+                return;
+            }
+
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            document.getElementById('status').innerText = "Laden van samples...";
+            
+            try {
+                await loadSamples();
+                initSeed();
+                
+                isPlaying = true;
+                nextStepTime = audioCtx.currentTime;
+                currentStep = 0;
+                scheduler();
+                
+                document.getElementById('startBtn').innerText = "Stop Ritme";
+                document.getElementById('status').innerText = "De stroom vloeit...";
+            } catch (e) {
+                document.getElementById('status').innerText = "Fout bij laden samples. Check console.";
+                console.error(e);
+            }
+        });
+    </script>
+</body>
+</html>
